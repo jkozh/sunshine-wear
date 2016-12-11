@@ -26,7 +26,7 @@
         android:layout_height="wrap_content"
         android:layout_alignParentTop="true"
         android:background="?attr/colorPrimary"
-        android:elevation="@dimen/appbar_elevation"
+        app:elevation="@dimen/appbar_elevation"
         android:orientation="vertical">
 
         <android.support.v7.widget.Toolbar
@@ -86,7 +86,7 @@
     <!-- This is used to give the card the appropriate margin
          list_item_extra_padding +
          abc_list_item_padding_horizontal_material -->
-    <android.support.v7.widget.Space
+    <android.support.v4.widget.Space
         android:id="@+id/cardviewAligner"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -95,7 +95,7 @@
         android:layout_alignParentRight="true"
         android:layout_marginTop="?attr/actionBarSize"
         android:layout_alignStart="@id/layout_center"
-        android:elevation="@dimen/appbar_elevation"
+        app:elevation="@dimen/appbar_elevation"
         android:layout_marginRight="@dimen/list_item_extra_padding"
         android:layout_marginEnd="@dimen/list_item_extra_padding"
         />
