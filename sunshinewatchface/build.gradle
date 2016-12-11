@@ -6,8 +6,8 @@ android {
     buildToolsVersion "25.0.1"
 
     defaultConfig {
-        applicationId "com.julia.android.wear"
-        minSdkVersion 20
+        applicationId "com.example.android.sunshine.app"
+        minSdkVersion 21
         targetSdkVersion 25
         versionCode 1
         versionName "1.0"
