@@ -31,6 +31,7 @@ import android.os.Handler;
 import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.v4.content.ContextCompat;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.view.SurfaceHolder;
@@ -74,7 +75,7 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
     private static class EngineHandler extends Handler {
         private final WeakReference<DigitalWatchFace.Engine> mWeakReference;
 
-        public EngineHandler(DigitalWatchFace.Engine reference) {
+        EngineHandler(DigitalWatchFace.Engine reference) {
             mWeakReference = new WeakReference<>(reference);
         }
 
@@ -139,10 +140,13 @@ public void onCreate(SurfaceHolder holder) {
 
             mBackgroundPaint = new Paint();
             // set the background color
-            mBackgroundPaint.setColor(resources.getColor(R.color.background));
+            mBackgroundPaint.setColor(ContextCompat.getColor(
+                    getApplicationContext(), R.color.background));
 
             mTextPaint = new Paint();
-            mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
+            // set color of time
+            mTextPaint = createTextPaint(ContextCompat.getColor(
+                    getApplicationContext(), R.color.digital_text));
 
             // allocate a Calendar to calculate local time using the UTC time and time zone
             mCalendar = Calendar.getInstance();
