@@ -29,11 +29,18 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 import android.widget.Toast;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEventBuffer;
 
 import java.lang.ref.WeakReference;
 import java.util.Calendar;
@@ -84,13 +91,19 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
         }
     }
 
-    private class Engine extends CanvasWatchFaceService.Engine {
+    private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
+            GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
+
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
+
+        // graphic objects
         Paint mBackgroundPaint;
         Paint mTextPaint;
-        boolean mAmbient;
+
+
         Calendar mCalendar;
+        // receiver to update the time zone
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -98,6 +111,8 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
                 invalidate();
             }
         };
+
+        // for positioning elements
         float mXOffset;
         float mYOffset;
 
@@ -105,27 +120,31 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
          */
+        boolean mAmbient;
         boolean mLowBitAmbient;
 
-        @Override
-        public void onCreate(SurfaceHolder holder) {
-            super.onCreate(holder);
+@Override
+public void onCreate(SurfaceHolder holder) {
+    super.onCreate(holder);
 
-            setWatchFaceStyle(new WatchFaceStyle.Builder(DigitalWatchFace.this)
-                    .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
-                    .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
-                    .setShowSystemUiTime(false)
-                    .setAcceptsTapEvents(true)
-                    .build());
+    setWatchFaceStyle(new WatchFaceStyle.Builder(DigitalWatchFace.this)
+            .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
+            .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
+            .setShowSystemUiTime(false)
+            .setAcceptsTapEvents(true)
+            .build());
+
             Resources resources = DigitalWatchFace.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
             mBackgroundPaint = new Paint();
+            // set the background color
             mBackgroundPaint.setColor(resources.getColor(R.color.background));
 
             mTextPaint = new Paint();
             mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
 
+            // allocate a Calendar to calculate local time using the UTC time and time zone
             mCalendar = Calendar.getInstance();
         }
 
@@ -296,6 +315,26 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
                         - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
+        }
+
+        @Override
+        public void onConnected(@Nullable Bundle bundle) {
+
+        }
+
+        @Override
+        public void onConnectionSuspended(int i) {
+
+        }
+
+        @Override
+        public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+
+        }
+
+        @Override
+        public void onDataChanged(DataEventBuffer dataEventBuffer) {
+
         }
     }
 }
