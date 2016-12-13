@@ -12,7 +12,7 @@
     <dimen name="temperature_low_y_offset">150dp</dimen>
 
     <dimen name="date_text_size">15dp</dimen>
-    <dimen name="date_text_size_round">15dp</dimen>
+    <dimen name="date_text_size_round">20dp</dimen>
 
     <dimen name="date_y_offset">105dp</dimen>
 

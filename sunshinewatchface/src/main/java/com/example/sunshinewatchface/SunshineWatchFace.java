@@ -39,6 +39,7 @@ import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
+import com.example.android.sunshine.app.R;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.wearable.DataApi;
 import com.google.android.gms.wearable.DataEvent;
@@ -60,9 +61,9 @@ import java.util.concurrent.TimeUnit;
  * Digital watch face with seconds. In ambient mode, the seconds aren't displayed. On devices with
  * low-bit ambient mode, the text is drawn without anti-aliasing in ambient mode.
  */
-public class DigitalWatchFace extends CanvasWatchFaceService {
+public class SunshineWatchFace extends CanvasWatchFaceService {
 
-    private static String LOG_TAG = DigitalWatchFace.class.getSimpleName();
+    private static String LOG_TAG = SunshineWatchFace.class.getSimpleName();
 
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
@@ -84,15 +85,15 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
     }
 
     private static class EngineHandler extends Handler {
-        private final WeakReference<DigitalWatchFace.Engine> mWeakReference;
+        private final WeakReference<SunshineWatchFace.Engine> mWeakReference;
 
-        EngineHandler(DigitalWatchFace.Engine reference) {
+        EngineHandler(SunshineWatchFace.Engine reference) {
             mWeakReference = new WeakReference<>(reference);
         }
 
         @Override
         public void handleMessage(Message msg) {
-            DigitalWatchFace.Engine engine = mWeakReference.get();
+            SunshineWatchFace.Engine engine = mWeakReference.get();
             if (engine != null) {
                 switch (msg.what) {
                     case MSG_UPDATE_TIME:
@@ -106,6 +107,7 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
     private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
             GoogleApiClient.ConnectionCallbacks {
 
+        private static final String WEATHER_ID = "WEATHER_ID";
         private static final String WEATHER_PATH = "/WEATHER_PATH";
         private static final String HIGH_TEMPERATURE = "HIGH_TEMPERATURE";
         private static final String LOW_TEMPERATURE = "LOW_TEMPERATURE";
@@ -149,27 +151,30 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
 
         String mHighTemperature;
         String mLowTemperature;
-        String mDate;
+        String mDate = "";
         Bitmap mIcon;
+        int mWeatherId;
 
         GoogleApiClient mGoogleApiClient;
+
+        private Resources resources;
 
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
 
-            mGoogleApiClient = new GoogleApiClient.Builder(DigitalWatchFace.this)
+            mGoogleApiClient = new GoogleApiClient.Builder(SunshineWatchFace.this)
                     .addApi(Wearable.API)
                     .addConnectionCallbacks(this)
                     .build();
 
-            setWatchFaceStyle(new WatchFaceStyle.Builder(DigitalWatchFace.this)
+            setWatchFaceStyle(new WatchFaceStyle.Builder(SunshineWatchFace.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
                     .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
                     .setShowSystemUiTime(false)
                     .build());
 
-            Resources resources = DigitalWatchFace.this.getResources();
+            resources = SunshineWatchFace.this.getResources();
 
             mBackgroundPaint = new Paint();
             // set the background color
@@ -199,11 +204,6 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
 
             mIconPaint = new Paint();
             mIconYOffset = resources.getDimension(R.dimen.icon_y_offset);
-            float scaleToUse = 0.4f;
-            mIcon = BitmapFactory.decodeResource(resources, R.drawable.art_clear);
-            float sizeY = (float) mIcon.getHeight() * scaleToUse;
-            float sizeX = (float) mIcon.getWidth() * scaleToUse;
-            mIcon = Bitmap.createScaledBitmap(mIcon, (int) sizeX, (int) sizeY, false);
 
             // allocate a Calendar to calculate local time using the UTC time and time zone
             mCalendar = Calendar.getInstance();
@@ -257,7 +257,8 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
             }
             mRegisteredTimeZoneReceiver = true;
             IntentFilter filter = new IntentFilter(Intent.ACTION_TIMEZONE_CHANGED);
-            DigitalWatchFace.this.registerReceiver(mTimeZoneReceiver, filter);
+            SunshineWatchFace.this.registerReceiver(mTimeZoneReceiver, filter);
+            mGoogleApiClient.connect();
         }
 
         private void unregisterReceiver() {
@@ -265,15 +266,19 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
                 return;
             }
             mRegisteredTimeZoneReceiver = false;
-            DigitalWatchFace.this.unregisterReceiver(mTimeZoneReceiver);
+            SunshineWatchFace.this.unregisterReceiver(mTimeZoneReceiver);
+
+            Wearable.DataApi.removeListener(mGoogleApiClient, this);
+            mGoogleApiClient.disconnect();
         }
+
 
         @Override
         public void onApplyWindowInsets(WindowInsets insets) {
             super.onApplyWindowInsets(insets);
 
             // Load resources that have alternate values for round watches.
-            Resources resources = DigitalWatchFace.this.getResources();
+            Resources resources = SunshineWatchFace.this.getResources();
             boolean isRound = insets.isRound();
 
             float timeTextSize = resources.getDimension(isRound
@@ -293,7 +298,7 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
             mLowTemperaturePaint.setTextSize(temperatureTextSize);
 
             mIconXOffset = resources.getDimension(isRound
-            ? R.dimen.icon_x_offset_round : R.dimen.icon_x_offset);
+                    ? R.dimen.icon_x_offset_round : R.dimen.icon_x_offset);
 
         }
 
@@ -343,42 +348,51 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
                     mCalendar.get(Calendar.HOUR), mCalendar.get(Calendar.MINUTE));
             canvas.drawText(
                     time,
-                    bounds.centerX() - mTimePaint.measureText(time)/2,
+                    // for centering time
+                    bounds.centerX() - mTimePaint.measureText(time) / 2,
                     mTimeYOffset,
                     mTimePaint);
 
             // high temperature
-            mHighTemperature = "25";
-            canvas.drawText(
-                    mHighTemperature,
-                    bounds.centerX() - mHighTemperaturePaint.measureText(mHighTemperature)/2,
-                    mHighTemperatureYOffset,
-                    mHighTemperaturePaint);
+            if (mHighTemperature != null) {
+                canvas.drawText(
+                        mHighTemperature,
+                        // for centering high temperature
+                        bounds.centerX() - mHighTemperaturePaint.measureText(mHighTemperature) / 2,
+                        mHighTemperatureYOffset,
+                        mHighTemperaturePaint);
+            }
 
             // low temperature
-            mLowTemperature = "16";
-            canvas.drawText(
-                    mLowTemperature,
-                    bounds.centerX() - mLowTemperaturePaint.measureText(mLowTemperature)/2
-                            + mHighTemperaturePaint.measureText(mHighTemperature),
-                    mLowTemperatureYOffset,
-                    mLowTemperaturePaint);
+            if (mLowTemperature != null) {
+                canvas.drawText(
+                        mLowTemperature,
+                        // for centering low temperature
+                        bounds.centerX() - mLowTemperaturePaint.measureText(mLowTemperature) / 2
+                                + mHighTemperaturePaint.measureText(mHighTemperature),
+                        mLowTemperatureYOffset,
+                        mLowTemperaturePaint);
+            }
 
             // current date
             DateFormat df = new SimpleDateFormat("EEE, MMM d yyyy", Locale.getDefault());
             mDate = df.format(mCalendar.getTime()).toUpperCase();
             canvas.drawText(
                     mDate,
-                    bounds.centerX() - mDatePaint.measureText(mDate)/2,
+                    // for centering date
+                    bounds.centerX() - mDatePaint.measureText(mDate) / 2,
                     mDateYOffset,
                     mDatePaint);
 
+
             // weather icon
-            canvas.drawBitmap(
-                    mIcon,
-                    mIconXOffset,
-                    mIconYOffset,
-                    mIconPaint);
+            if (mIcon != null) {
+                canvas.drawBitmap(
+                        mIcon,
+                        mIconXOffset,
+                        mIconYOffset,
+                        mIconPaint);
+            }
 
         }
 
@@ -414,50 +428,45 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
             }
         }
 
-        void fetchWeatherData() {
-
-        }
-
         @Override
         public void onConnected(@Nullable Bundle bundle) {
-            Log.d(LOG_TAG, "onConnected");
+            Log.d(LOG_TAG, "GoogleAPI onConnected");
             Wearable.DataApi.addListener(mGoogleApiClient, Engine.this);
-
-            fetchWeatherData();
         }
 
         @Override
         public void onConnectionSuspended(int i) {
-            Log.d(LOG_TAG, "onConnectionSuspended");
+            Log.d(LOG_TAG, "GoogleAPI onConnectionSuspended");
         }
 
         @Override
         public void onDataChanged(DataEventBuffer dataEventBuffer) {
             for (DataEvent event : dataEventBuffer) {
-                if (event.getType() == DataEvent.TYPE_CHANGED) {
-                    DataItem dataItem = event.getDataItem();
-                    if (dataItem.getUri().getPath().compareTo(WEATHER_PATH) == 0) {
 
-                        DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
+                DataItem dataItem = event.getDataItem();
+                if (WEATHER_PATH.equals(dataItem.getUri().getPath())) {
 
-                        if (dataMap.containsKey(HIGH_TEMPERATURE)) {
-                            mHighTemperature = dataMap.getString(HIGH_TEMPERATURE);
-                            Log.d(LOG_TAG, "High temperature: " + mHighTemperature);
-                        } else {
-                            Log.d(LOG_TAG, "No high temperature!");
-                        }
+                    DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
 
-                        if (dataMap.containsKey(LOW_TEMPERATURE)) {
-                            mLowTemperature = dataMap.getString(LOW_TEMPERATURE);
-                            Log.d(LOG_TAG, "Low temperature: " + mLowTemperature);
-                        } else {
-                            Log.d(LOG_TAG, "No low temperature!");
-                        }
+                    mHighTemperature = dataMap.getString(HIGH_TEMPERATURE);
+                    mLowTemperature = dataMap.getString(LOW_TEMPERATURE);
+                    mWeatherId = dataMap.getInt(WEATHER_ID);
 
-                        invalidate();
-                    }
+                    setWeatherIcon();
+
+                    invalidate();
                 }
+
             }
+        }
+
+        private void setWeatherIcon() {
+            float scale = 0.4f;
+            mIcon = BitmapFactory.decodeResource(
+                    resources, Utility.getIconResourceForWeatherCondition(mWeatherId));
+            float sizeY = (float) mIcon.getHeight() * scale;
+            float sizeX = (float) mIcon.getWidth() * scale;
+            mIcon = Bitmap.createScaledBitmap(mIcon, (int) sizeX, (int) sizeY, false);
         }
     }
 }

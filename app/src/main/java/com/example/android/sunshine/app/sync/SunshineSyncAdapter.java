@@ -24,6 +24,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.annotation.IntDef;
+import android.support.annotation.NonNull;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.TaskStackBuilder;
 import android.text.format.Time;
@@ -36,6 +37,11 @@ import com.example.android.sunshine.app.R;
 import com.example.android.sunshine.app.Utility;
 import com.example.android.sunshine.app.data.WeatherContract;
 import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -53,13 +59,13 @@ import java.util.Vector;
 import java.util.concurrent.ExecutionException;
 
 public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
-    public final String LOG_TAG = SunshineSyncAdapter.class.getSimpleName();
+    private final String LOG_TAG = SunshineSyncAdapter.class.getSimpleName();
     public static final String ACTION_DATA_UPDATED =
             "com.example.android.sunshine.app.ACTION_DATA_UPDATED";
     // Interval at which to sync with the weather, in seconds.
     // 60 seconds (1 minute) * 180 = 3 hours
-    public static final int SYNC_INTERVAL = 60 * 180;
-    public static final int SYNC_FLEXTIME = SYNC_INTERVAL/3;
+    private static final int SYNC_INTERVAL = 60 * 180;
+    private static final int SYNC_FLEXTIME = SYNC_INTERVAL/3;
     private static final long DAY_IN_MILLIS = 1000 * 60 * 60 * 24;
     private static final int WEATHER_NOTIFICATION_ID = 3004;
 
@@ -87,7 +93,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     public static final int LOCATION_STATUS_UNKNOWN = 3;
     public static final int LOCATION_STATUS_INVALID = 4;
 
-    public SunshineSyncAdapter(Context context, boolean autoInitialize) {
+    SunshineSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
     }
 
@@ -158,7 +164,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
 
             // Read the input stream into a String
             InputStream inputStream = urlConnection.getInputStream();
-            StringBuffer buffer = new StringBuffer();
+            StringBuilder buffer = new StringBuilder();
             if (inputStream == null) {
                 // Nothing to do.
                 return;
@@ -170,7 +176,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 // Since it's JSON, adding a newline isn't necessary (it won't affect parsing)
                 // But it does make debugging a *lot* easier if you print out the completed
                 // buffer for debugging.
-                buffer.append(line + "\n");
+                buffer.append(line).append("\n");
             }
 
             if (buffer.length() == 0) {
@@ -201,7 +207,6 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 }
             }
         }
-        return;
     }
 
     /**
@@ -369,6 +374,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
+                notifyWear();
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
             setLocationStatus(getContext(), LOCATION_STATUS_OK);
@@ -420,7 +426,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 // we'll query our contentProvider, as always
                 Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
 
-                if (cursor.moveToFirst()) {
+                if (cursor != null && cursor.moveToFirst()) {
                     int weatherId = cursor.getInt(INDEX_WEATHER_ID);
                     double high = cursor.getDouble(INDEX_MAX_TEMP);
                     double low = cursor.getDouble(INDEX_MIN_TEMP);
@@ -498,10 +504,54 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                     //refreshing last sync
                     SharedPreferences.Editor editor = prefs.edit();
                     editor.putLong(lastNotificationKey, System.currentTimeMillis());
-                    editor.commit();
+                    editor.apply();
                 }
                 cursor.close();
             }
+        }
+    }
+
+    private void notifyWear() {
+
+        final String WEATHER_ID = "WEATHER_ID";
+        final String WEATHER_PATH = "/WEATHER_PATH";
+        final String HIGH_TEMPERATURE = "HIGH_TEMPERATURE";
+        final String LOW_TEMPERATURE = "LOW_TEMPERATURE";
+
+        String locationQuery = Utility.getPreferredLocation(getContext());
+        Uri weatherUri = WeatherContract.WeatherEntry
+                .buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+        Cursor cursor = getContext().getContentResolver()
+                .query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+
+        if (cursor != null && cursor.moveToFirst()) {
+
+            int weatherId = cursor.getInt(INDEX_WEATHER_ID);
+            double high = cursor.getDouble(INDEX_MAX_TEMP);
+            double low = cursor.getDouble(INDEX_MIN_TEMP);
+
+            PutDataMapRequest dataMap = PutDataMapRequest.create(WEATHER_PATH);
+            dataMap.getDataMap().putString(HIGH_TEMPERATURE, Double.toString(high));
+            dataMap.getDataMap().putString(LOW_TEMPERATURE, Double.toString(low));
+            dataMap.getDataMap().putInt(WEATHER_ID, weatherId);
+            PutDataRequest request = dataMap.asPutDataRequest();
+
+            Wearable.DataApi.putDataItem(MainActivity.mGoogleApiClient, request)
+                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                        @Override
+                        public void onResult(@NonNull DataApi.DataItemResult result) {
+                            if (!result.getStatus().isSuccess()) {
+                                Log.d(LOG_TAG, "Error while sending weather info. Status code: "
+                                        + result.getStatus().getStatusCode());
+                            } else {
+                                Log.d(LOG_TAG, "Weather info has been sent "
+                                        + result.getDataItem().getUri());
+                            }
+                        }
+                    });
+        }
+        if (cursor != null) {
+            cursor.close();
         }
     }
 
@@ -514,8 +564,8 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
      * @param lon the longitude of the city
      * @return the row ID of the added location.
      */
-    long addLocation(String locationSetting, String cityName, double lat, double lon) {
-        long locationId;
+    private long addLocation(String locationSetting, String cityName, double lat, double lon) {
+        long locationId = 0;
 
         // First, check if the location with this city name exists in the db
         Cursor locationCursor = getContext().getContentResolver().query(
@@ -525,32 +575,36 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 new String[]{locationSetting},
                 null);
 
-        if (locationCursor.moveToFirst()) {
-            int locationIdIndex = locationCursor.getColumnIndex(WeatherContract.LocationEntry._ID);
-            locationId = locationCursor.getLong(locationIdIndex);
-        } else {
-            // Now that the content provider is set up, inserting rows of data is pretty simple.
-            // First create a ContentValues object to hold the data you want to insert.
-            ContentValues locationValues = new ContentValues();
+        if (locationCursor != null) {
+            if (locationCursor.moveToFirst()) {
+                int locationIdIndex = locationCursor.getColumnIndex(WeatherContract.LocationEntry._ID);
+                locationId = locationCursor.getLong(locationIdIndex);
+            } else {
+                // Now that the content provider is set up, inserting rows of data is pretty simple.
+                // First create a ContentValues object to hold the data you want to insert.
+                ContentValues locationValues = new ContentValues();
 
-            // Then add the data, along with the corresponding name of the data type,
-            // so the content provider knows what kind of value is being inserted.
-            locationValues.put(WeatherContract.LocationEntry.COLUMN_CITY_NAME, cityName);
-            locationValues.put(WeatherContract.LocationEntry.COLUMN_LOCATION_SETTING, locationSetting);
-            locationValues.put(WeatherContract.LocationEntry.COLUMN_COORD_LAT, lat);
-            locationValues.put(WeatherContract.LocationEntry.COLUMN_COORD_LONG, lon);
+                // Then add the data, along with the corresponding name of the data type,
+                // so the content provider knows what kind of value is being inserted.
+                locationValues.put(WeatherContract.LocationEntry.COLUMN_CITY_NAME, cityName);
+                locationValues.put(WeatherContract.LocationEntry.COLUMN_LOCATION_SETTING, locationSetting);
+                locationValues.put(WeatherContract.LocationEntry.COLUMN_COORD_LAT, lat);
+                locationValues.put(WeatherContract.LocationEntry.COLUMN_COORD_LONG, lon);
 
-            // Finally, insert location data into the database.
-            Uri insertedUri = getContext().getContentResolver().insert(
-                    WeatherContract.LocationEntry.CONTENT_URI,
-                    locationValues
-            );
+                // Finally, insert location data into the database.
+                Uri insertedUri = getContext().getContentResolver().insert(
+                        WeatherContract.LocationEntry.CONTENT_URI,
+                        locationValues
+                );
 
-            // The resulting URI contains the ID for the row.  Extract the locationId from the Uri.
-            locationId = ContentUris.parseId(insertedUri);
+                // The resulting URI contains the ID for the row.  Extract the locationId from the Uri.
+                locationId = ContentUris.parseId(insertedUri);
+            }
         }
 
-        locationCursor.close();
+        if (locationCursor != null) {
+            locationCursor.close();
+        }
         // Wait, that worked?  Yes!
         return locationId;
     }
@@ -558,7 +612,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     /**
      * Helper method to schedule the sync adapter periodic execution
      */
-    public static void configurePeriodicSync(Context context, int syncInterval, int flexTime) {
+    private static void configurePeriodicSync(Context context, int syncInterval, int flexTime) {
         Account account = getSyncAccount(context);
         String authority = context.getString(R.string.content_authority);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
@@ -594,7 +648,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
      * @param context The context used to access the account service
      * @return a fake account.
      */
-    public static Account getSyncAccount(Context context) {
+    private static Account getSyncAccount(Context context) {
         // Get an instance of the Android account manager
         AccountManager accountManager =
                 (AccountManager) context.getSystemService(Context.ACCOUNT_SERVICE);
@@ -656,6 +710,6 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(c);
         SharedPreferences.Editor spe = sp.edit();
         spe.putInt(c.getString(R.string.pref_location_status_key), locationStatus);
-        spe.commit();
+        spe.apply();
     }
 }
