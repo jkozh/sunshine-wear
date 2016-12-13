@@ -21,6 +21,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -29,22 +31,28 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
-import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
-import android.widget.Toast;
 
-import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.DataMapItem;
+import com.google.android.gms.wearable.Wearable;
 
 import java.lang.ref.WeakReference;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -53,6 +61,9 @@ import java.util.concurrent.TimeUnit;
  * low-bit ambient mode, the text is drawn without anti-aliasing in ambient mode.
  */
 public class DigitalWatchFace extends CanvasWatchFaceService {
+
+    private static String LOG_TAG = DigitalWatchFace.class.getSimpleName();
+
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
 
@@ -93,14 +104,22 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
     }
 
     private class Engine extends CanvasWatchFaceService.Engine implements DataApi.DataListener,
-            GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
+            GoogleApiClient.ConnectionCallbacks {
+
+        private static final String WEATHER_PATH = "/WEATHER_PATH";
+        private static final String HIGH_TEMPERATURE = "HIGH_TEMPERATURE";
+        private static final String LOW_TEMPERATURE = "LOW_TEMPERATURE";
 
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
 
         // graphic objects
         Paint mBackgroundPaint;
-        Paint mTextPaint;
+        Paint mTimePaint;
+        Paint mDatePaint;
+        Paint mIconPaint;
+        Paint mHighTemperaturePaint;
+        Paint mLowTemperaturePaint;
 
 
         Calendar mCalendar;
@@ -114,8 +133,12 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
         };
 
         // for positioning elements
-        float mXOffset;
-        float mYOffset;
+        float mTimeYOffset;
+        float mDateYOffset;
+        float mHighTemperatureYOffset;
+        float mLowTemperatureYOffset;
+        float mIconXOffset;
+        float mIconYOffset;
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
@@ -124,32 +147,68 @@ public class DigitalWatchFace extends CanvasWatchFaceService {
         boolean mAmbient;
         boolean mLowBitAmbient;
 
-@Override
-public void onCreate(SurfaceHolder holder) {
-    super.onCreate(holder);
+        String mHighTemperature;
+        String mLowTemperature;
+        String mDate;
+        Bitmap mIcon;
 
-    setWatchFaceStyle(new WatchFaceStyle.Builder(DigitalWatchFace.this)
-            .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
-            .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
-            .setShowSystemUiTime(false)
-            .setAcceptsTapEvents(true)
-            .build());
+        GoogleApiClient mGoogleApiClient;
+
+        @Override
+        public void onCreate(SurfaceHolder holder) {
+            super.onCreate(holder);
+
+            mGoogleApiClient = new GoogleApiClient.Builder(DigitalWatchFace.this)
+                    .addApi(Wearable.API)
+                    .addConnectionCallbacks(this)
+                    .build();
+
+            setWatchFaceStyle(new WatchFaceStyle.Builder(DigitalWatchFace.this)
+                    .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
+                    .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
+                    .setShowSystemUiTime(false)
+                    .build());
 
             Resources resources = DigitalWatchFace.this.getResources();
-            mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
             mBackgroundPaint = new Paint();
             // set the background color
             mBackgroundPaint.setColor(ContextCompat.getColor(
                     getApplicationContext(), R.color.background));
 
-            mTextPaint = new Paint();
+            mTimeYOffset = resources.getDimension(R.dimen.digital_time_y_offset);
+            mTimePaint = new Paint();
             // set color of time
-            mTextPaint = createTextPaint(ContextCompat.getColor(
+            mTimePaint = createTextPaint(ContextCompat.getColor(
                     getApplicationContext(), R.color.digital_text));
+
+            mHighTemperatureYOffset = resources.getDimension(R.dimen.temperature_high_y_offset);
+            mHighTemperaturePaint = new Paint();
+            mHighTemperaturePaint = createTextPaint(ContextCompat.getColor(
+                    getApplicationContext(), R.color.digital_text));
+
+            mLowTemperatureYOffset = resources.getDimension(R.dimen.temperature_low_y_offset);
+            mLowTemperaturePaint = new Paint();
+            mLowTemperaturePaint = createTextPaint(ContextCompat.getColor(
+                    getApplicationContext(), R.color.date_text));
+
+            mDateYOffset = resources.getDimension(R.dimen.date_y_offset);
+            mDatePaint = new Paint();
+            mDatePaint = createTextPaint(ContextCompat.getColor(
+                    getApplicationContext(), R.color.date_text));
+
+            mIconPaint = new Paint();
+            mIconYOffset = resources.getDimension(R.dimen.icon_y_offset);
+            float scaleToUse = 0.4f;
+            mIcon = BitmapFactory.decodeResource(resources, R.drawable.art_clear);
+            float sizeY = (float) mIcon.getHeight() * scaleToUse;
+            float sizeX = (float) mIcon.getWidth() * scaleToUse;
+            mIcon = Bitmap.createScaledBitmap(mIcon, (int) sizeX, (int) sizeY, false);
 
             // allocate a Calendar to calculate local time using the UTC time and time zone
             mCalendar = Calendar.getInstance();
+
+
         }
 
         @Override
@@ -171,12 +230,19 @@ public void onCreate(SurfaceHolder holder) {
             super.onVisibilityChanged(visible);
 
             if (visible) {
+
+                mGoogleApiClient.connect();
+
                 registerReceiver();
 
                 // Update time zone in case it changed while we weren't visible.
                 mCalendar.setTimeZone(TimeZone.getDefault());
                 invalidate();
             } else {
+                if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
+                    Wearable.DataApi.removeListener(mGoogleApiClient, this);
+                    mGoogleApiClient.disconnect();
+                }
                 unregisterReceiver();
             }
 
@@ -209,12 +275,26 @@ public void onCreate(SurfaceHolder holder) {
             // Load resources that have alternate values for round watches.
             Resources resources = DigitalWatchFace.this.getResources();
             boolean isRound = insets.isRound();
-            mXOffset = resources.getDimension(isRound
-                    ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
-            float textSize = resources.getDimension(isRound
-                    ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
 
-            mTextPaint.setTextSize(textSize);
+            float timeTextSize = resources.getDimension(isRound
+                    ? R.dimen.digital_time_text_size_round : R.dimen.digital_time_text_size);
+
+            mTimePaint.setTextSize(timeTextSize);
+
+            float dateTextSize = resources.getDimension(isRound
+                    ? R.dimen.date_text_size_round : R.dimen.date_text_size);
+
+            mDatePaint.setTextSize(dateTextSize);
+
+            float temperatureTextSize = resources.getDimension(isRound
+                    ? R.dimen.temperature_text_size_round : R.dimen.temperature_text_size);
+
+            mHighTemperaturePaint.setTextSize(temperatureTextSize);
+            mLowTemperaturePaint.setTextSize(temperatureTextSize);
+
+            mIconXOffset = resources.getDimension(isRound
+            ? R.dimen.icon_x_offset_round : R.dimen.icon_x_offset);
+
         }
 
         @Override
@@ -235,7 +315,7 @@ public void onCreate(SurfaceHolder holder) {
             if (mAmbient != inAmbientMode) {
                 mAmbient = inAmbientMode;
                 if (mLowBitAmbient) {
-                    mTextPaint.setAntiAlias(!inAmbientMode);
+                    mTimePaint.setAntiAlias(!inAmbientMode);
                 }
                 invalidate();
             }
@@ -243,29 +323,6 @@ public void onCreate(SurfaceHolder holder) {
             // Whether the timer should be running depends on whether we're visible (as well as
             // whether we're in ambient mode), so we may need to start or stop the timer.
             updateTimer();
-        }
-
-        /**
-         * Captures tap event (and tap type) and toggles the background color if the user finishes
-         * a tap.
-         */
-        @Override
-        public void onTapCommand(int tapType, int x, int y, long eventTime) {
-            switch (tapType) {
-                case TAP_TYPE_TOUCH:
-                    // The user has started touching the screen.
-                    break;
-                case TAP_TYPE_TOUCH_CANCEL:
-                    // The user has started a different gesture or otherwise cancelled the tap.
-                    break;
-                case TAP_TYPE_TAP:
-                    // The user has completed the tap gesture.
-                    // TODO: Add code to handle the tap gesture.
-                    Toast.makeText(getApplicationContext(), R.string.message, Toast.LENGTH_SHORT)
-                            .show();
-                    break;
-            }
-            invalidate();
         }
 
         @Override
@@ -281,12 +338,48 @@ public void onCreate(SurfaceHolder holder) {
             long now = System.currentTimeMillis();
             mCalendar.setTimeInMillis(now);
 
-            String text = mAmbient
-                    ? String.format("%d:%02d", mCalendar.get(Calendar.HOUR),
-                    mCalendar.get(Calendar.MINUTE))
-                    : String.format("%d:%02d:%02d", mCalendar.get(Calendar.HOUR),
-                    mCalendar.get(Calendar.MINUTE), mCalendar.get(Calendar.SECOND));
-            canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
+            // current time
+            String time = String.format(Locale.getDefault(), "%d:%02d",
+                    mCalendar.get(Calendar.HOUR), mCalendar.get(Calendar.MINUTE));
+            canvas.drawText(
+                    time,
+                    bounds.centerX() - mTimePaint.measureText(time)/2,
+                    mTimeYOffset,
+                    mTimePaint);
+
+            // high temperature
+            mHighTemperature = "25";
+            canvas.drawText(
+                    mHighTemperature,
+                    bounds.centerX() - mHighTemperaturePaint.measureText(mHighTemperature)/2,
+                    mHighTemperatureYOffset,
+                    mHighTemperaturePaint);
+
+            // low temperature
+            mLowTemperature = "16";
+            canvas.drawText(
+                    mLowTemperature,
+                    bounds.centerX() - mLowTemperaturePaint.measureText(mLowTemperature)/2
+                            + mHighTemperaturePaint.measureText(mHighTemperature),
+                    mLowTemperatureYOffset,
+                    mLowTemperaturePaint);
+
+            // current date
+            DateFormat df = new SimpleDateFormat("EEE, MMM d yyyy", Locale.getDefault());
+            mDate = df.format(mCalendar.getTime()).toUpperCase();
+            canvas.drawText(
+                    mDate,
+                    bounds.centerX() - mDatePaint.measureText(mDate)/2,
+                    mDateYOffset,
+                    mDatePaint);
+
+            // weather icon
+            canvas.drawBitmap(
+                    mIcon,
+                    mIconXOffset,
+                    mIconYOffset,
+                    mIconPaint);
+
         }
 
         /**
@@ -321,24 +414,50 @@ public void onCreate(SurfaceHolder holder) {
             }
         }
 
+        void fetchWeatherData() {
+
+        }
+
         @Override
         public void onConnected(@Nullable Bundle bundle) {
+            Log.d(LOG_TAG, "onConnected");
+            Wearable.DataApi.addListener(mGoogleApiClient, Engine.this);
 
+            fetchWeatherData();
         }
 
         @Override
         public void onConnectionSuspended(int i) {
-
-        }
-
-        @Override
-        public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-
+            Log.d(LOG_TAG, "onConnectionSuspended");
         }
 
         @Override
         public void onDataChanged(DataEventBuffer dataEventBuffer) {
+            for (DataEvent event : dataEventBuffer) {
+                if (event.getType() == DataEvent.TYPE_CHANGED) {
+                    DataItem dataItem = event.getDataItem();
+                    if (dataItem.getUri().getPath().compareTo(WEATHER_PATH) == 0) {
 
+                        DataMap dataMap = DataMapItem.fromDataItem(dataItem).getDataMap();
+
+                        if (dataMap.containsKey(HIGH_TEMPERATURE)) {
+                            mHighTemperature = dataMap.getString(HIGH_TEMPERATURE);
+                            Log.d(LOG_TAG, "High temperature: " + mHighTemperature);
+                        } else {
+                            Log.d(LOG_TAG, "No high temperature!");
+                        }
+
+                        if (dataMap.containsKey(LOW_TEMPERATURE)) {
+                            mLowTemperature = dataMap.getString(LOW_TEMPERATURE);
+                            Log.d(LOG_TAG, "Low temperature: " + mLowTemperature);
+                        } else {
+                            Log.d(LOG_TAG, "No low temperature!");
+                        }
+
+                        invalidate();
+                    }
+                }
+            }
         }
     }
 }
